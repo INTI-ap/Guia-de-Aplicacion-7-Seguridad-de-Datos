@@ -38,11 +38,15 @@ void main() {
           repositorio: getIt<SesionRepository>(),
           generador: getIt<GeneradorTokenSimulado>(),
           directorio: getIt<DirectorioUsuariosSimulado>(),
+          programarExpiracionAutomatica: false,
         ),
       );
   });
 
   tearDown(() async {
+    if (getIt.isRegistered<GestorSesion>()) {
+      getIt<GestorSesion>().dispose();
+    }
     await getIt.reset();
   });
 
@@ -132,21 +136,50 @@ void main() {
     await abrir(tester);
     await iniciarSesion(tester);
 
-    // Simula el reinicio: el gestor vuelve a leer el almacén seguro.
-    await getIt<GestorSesion>().cerrarSesion();
-    await getIt<GestorSesion>().restaurar();
-    await tester.pumpAndSettle();
-
-    // Al cerrar sesión el token se borró, así que no hay nada que restaurar…
-    expect(find.text('Sin sesión iniciada'), findsOneWidget);
-
-    // …y si se vuelve a iniciar, el gestor recupera la sesión del almacén.
-    await iniciarSesion(tester);
+    // Comprobamos que el token quedó persistido en el almacén seguro.
     final Sesion? enAlmacen = await getIt<SesionRepository>().leer();
-    await getIt<GestorSesion>().restaurar();
-    await tester.pumpAndSettle();
-
     expect(enAlmacen, isNotNull);
     expect(find.text('Sesión activa'), findsOneWidget);
+
+    // Simula la persistencia entre aperturas: conserva el dato serializado
+    // y reconstruye el gestor, el repositorio y el adaptador. Al usar un
+    // doble en memoria, esta prueba no sustituye el cierre/reinicio manual
+    // de la aplicación en Android o iOS.
+    final Map<String, String> datosPersistidos = Map<String, String>.from(
+      almacen.volcadoParaPruebas(),
+    );
+    getIt<GestorSesion>().dispose();
+    await getIt.unregister<GestorSesion>();
+    await getIt.unregister<SesionRepository>();
+    await getIt.unregister<AlmacenSeguro>();
+    await almacen.limpiar();
+
+    final AlmacenSeguroEnMemoria almacenReabierto = AlmacenSeguroEnMemoria(
+      datosIniciales: datosPersistidos,
+    );
+    final SesionRepository repositorioReabierto = SesionRepositorySeguro(
+      almacenReabierto,
+    );
+    getIt.registerSingleton<AlmacenSeguro>(almacenReabierto);
+    getIt.registerSingleton<SesionRepository>(repositorioReabierto);
+
+    final GestorSesion nuevoGestor = GestorSesion(
+      repositorio: repositorioReabierto,
+      generador: getIt<GeneradorTokenSimulado>(),
+      directorio: getIt<DirectorioUsuariosSimulado>(),
+      programarExpiracionAutomatica: false,
+    );
+    getIt.registerSingleton<GestorSesion>(nuevoGestor);
+
+    // Al arrancar la aplicación, main() ejecuta restaurar() en el nuevo gestor.
+    await nuevoGestor.restaurar();
+    await tester.pumpWidget(const MaterialApp(home: PantallaSesion()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sesión activa'), findsOneWidget);
+    expect(find.text('Rosa Quispe Huamán'), findsOneWidget);
+    expect(find.text('****3456'), findsOneWidget);
+    expect(await repositorioReabierto.leer(), isNotNull);
+    expect(await almacenReabierto.claves(), contains('sesion.activa'));
   });
 }

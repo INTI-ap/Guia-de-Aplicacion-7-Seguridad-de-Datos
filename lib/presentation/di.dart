@@ -166,6 +166,7 @@ Future<void> _registrarRepositorios({
         generador: getIt<GeneradorTokenSimulado>(),
         directorio: getIt<DirectorioUsuariosSimulado>(),
       ),
+      dispose: (GestorSesion gestor) => gestor.dispose(),
     );
 }
 
