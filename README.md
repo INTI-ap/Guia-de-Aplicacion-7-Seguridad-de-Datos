@@ -200,3 +200,12 @@ como no presentado**.
   https://mas.owasp.org/MASVS/controls/MASVS-STORAGE-1/
 - Steenbakker, J. (2026). *flutter_secure_storage* (Versión 11.2.0) [Paquete de
   Flutter]. pub.dev. https://pub.dev/packages/flutter_secure_storage
+
+
+## Persona 1: almacén seguro y configuración de plataformas
+
+El adaptador conserva la configuración de `flutter_secure_storage 11.2.0` y traduce los errores a `FalloSeguridad`. El mensaje público no incluye el código ni el texto técnico del plugin, porque pueden contener información sensible; la causa se conserva para diagnóstico controlado.
+
+Android usa `minSdk = 24`, `allowBackup = false` y reglas explícitas para excluir los datos privados tanto de copias como de transferencia entre dispositivos. Los XML efectivos están en `android/app/src/main/res/xml/`; el manifiesto de referencia en `docs/android/` es XML válido. iOS y macOS declaran el grupo Keychain de la aplicación. Su compilación y funcionamiento requieren validación en Apple.
+
+Las pruebas `almacen_seguro_sistema_test.dart` verifican operaciones del canal, opciones Android y errores sin publicación de secretos. `almacen_seguro_en_memoria_test.dart` comprueba aislamiento, sobrescritura, contador, limpieza y simulación de fallos. Las pruebas del canal no sustituyen la comprobación real de persistencia en Android. Las capturas se entregan fuera del repositorio.
