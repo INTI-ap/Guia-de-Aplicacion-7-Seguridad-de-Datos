@@ -46,7 +46,7 @@ class AlmacenSeguroSistema implements AlmacenSeguro {
   /// [almacen] se puede inyectar para las pruebas de integración; en
   /// producción se usa la instancia configurada de [opcionesEndurecidas].
   AlmacenSeguroSistema({FlutterSecureStorage? almacen})
-      : _almacen = almacen ?? opcionesEndurecidas;
+    : _almacen = almacen ?? opcionesEndurecidas;
 
   /// Prefijo de las claves dentro de las preferencias de Android.
   static const String prefijoPreferencias = 'manos_seguras';
@@ -159,10 +159,8 @@ class AlmacenSeguroSistema implements AlmacenSeguro {
     try {
       return await operacion();
     } on PlatformException catch (error) {
-      throw FalloSeguridad(
-        '$mensaje (${error.code}: ${error.message ?? 'sin detalle'})',
-        causa: error,
-      );
+      // El mensaje del plugin puede contener secretos; solo se conserva como causa.
+      throw FalloSeguridad(mensaje, causa: error);
     } on MissingPluginException catch (error) {
       // Ocurre al ejecutar en una plataforma sin implementación registrada
       // (por ejemplo, pruebas de widget sin `FlutterSecureStorage` falso).
