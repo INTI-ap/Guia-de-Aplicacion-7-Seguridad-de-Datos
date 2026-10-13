@@ -2,7 +2,9 @@ import 'dart:math';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:manos_seguras/core/fallos.dart';
+import 'package:manos_seguras/core/gestor_sesion.dart';
 import 'package:manos_seguras/domain/entidades/sesion.dart';
+import 'package:manos_seguras/domain/repositorios/sesion_repository.dart';
 import 'package:manos_seguras/domain/servicios/generador_token.dart';
 
 /// **Pruebas de las entidades de sesión y del generador de tokens.**
@@ -213,6 +215,17 @@ void main() {
       expect(Sesion.desdeAlmacen(manipulada).rol, RolUsuario.observador);
     });
 
+    test('un rol con tipo de dato no texto lanza FalloDeValidacion', () {
+      final String manipulada = sesion
+          .serializar()
+          .replaceAll('"rol":"observador"', '"rol":12345');
+
+      expect(
+        () => Sesion.desdeAlmacen(manipulada),
+        throwsA(isA<FalloDeValidacion>()),
+      );
+    });
+
     test('activaEn refleja la vigencia del token', () {
       expect(sesion.activaEn(instanteBase), isTrue);
       expect(
@@ -263,4 +276,74 @@ void main() {
       expect(fallo.mensaje, isNot(contains('no existe')));
     });
   });
+
+  group('GestorSesion · expiración en memoria y datos corruptos', () {
+    test('el temporizador expira automáticamente la sesión y limpia el almacén',
+        () async {
+      // Repositorio doble en memoria
+      final Map<String, String> almacen = <String, String>{};
+      final _RepoEnMemoria repo = _RepoEnMemoria(almacen);
+      final GestorSesion gestor = GestorSesion(
+        repositorio: repo,
+        generador: GeneradorTokenSimulado(
+          vigencia: const Duration(milliseconds: 50),
+        ),
+      );
+
+      final Sesion sesion = await gestor.iniciarSesion(
+        documento: '40123456',
+        clave: 'higiene2026',
+      );
+
+      expect(gestor.value, sesion);
+      expect(almacen, isNotEmpty);
+
+      // Esperamos que venza el tiempo de vigencia
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+
+      expect(gestor.value, isNull);
+      expect(almacen, isEmpty);
+      gestor.dispose();
+    });
+
+    test('restaurar con datos corruptos limpia el almacén y no deja escapar la falla',
+        () async {
+      final Map<String, String> almacen = <String, String>{
+        'sesion.activa': '{"v":1,"rol":12345}',
+      };
+      final _RepoEnMemoria repo = _RepoEnMemoria(almacen);
+      final GestorSesion gestor = GestorSesion(repositorio: repo);
+
+      await gestor.restaurar();
+
+      expect(gestor.value, isNull);
+      expect(almacen, isEmpty);
+      gestor.dispose();
+    });
+  });
+}
+
+class _RepoEnMemoria implements SesionRepository {
+  _RepoEnMemoria(this.almacen);
+  final Map<String, String> almacen;
+
+  @override
+  Future<void> cerrar() async => almacen.remove('sesion.activa');
+
+  @override
+  Future<void> guardar(Sesion sesion) async =>
+      almacen['sesion.activa'] = sesion.serializar();
+
+  @override
+  Future<bool> haySesionActiva() async {
+    final Sesion? s = await leer();
+    return s != null && s.activaEn(DateTime.now());
+  }
+
+  @override
+  Future<Sesion?> leer() async {
+    final String? crudo = almacen['sesion.activa'];
+    if (crudo == null) return null;
+    return Sesion.desdeAlmacen(crudo);
+  }
 }

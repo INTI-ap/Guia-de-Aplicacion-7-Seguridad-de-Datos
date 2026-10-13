@@ -289,10 +289,17 @@ class Sesion {
       throw const FalloDeValidacion('La sesión guardada no incluye el token.');
     }
 
+    final Object? rolCrudo = mapa['rol'];
+    if (rolCrudo is! String) {
+      throw const FalloDeValidacion(
+        'El rol guardado no tiene un formato válido (debe ser texto).',
+      );
+    }
+
     return Sesion(
       documento: _textoRequerido(mapa, 'documento'),
       nombre: _textoRequerido(mapa, 'nombre'),
-      rol: RolUsuario.desdeNombre(mapa['rol'] as String?),
+      rol: RolUsuario.desdeNombre(rolCrudo),
       token: TokenSesion.desdeAlmacen(jsonEncode(tokenCrudo)),
     );
   }

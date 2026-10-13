@@ -38,11 +38,15 @@ void main() {
           repositorio: getIt<SesionRepository>(),
           generador: getIt<GeneradorTokenSimulado>(),
           directorio: getIt<DirectorioUsuariosSimulado>(),
+          programarExpiracionAutomatica: false,
         ),
       );
   });
 
   tearDown(() async {
+    if (getIt.isRegistered<GestorSesion>()) {
+      getIt<GestorSesion>().dispose();
+    }
     await getIt.reset();
   });
 
@@ -132,21 +136,33 @@ void main() {
     await abrir(tester);
     await iniciarSesion(tester);
 
-    // Simula el reinicio: el gestor vuelve a leer el almacén seguro.
-    await getIt<GestorSesion>().cerrarSesion();
-    await getIt<GestorSesion>().restaurar();
-    await tester.pumpAndSettle();
-
-    // Al cerrar sesión el token se borró, así que no hay nada que restaurar…
-    expect(find.text('Sin sesión iniciada'), findsOneWidget);
-
-    // …y si se vuelve a iniciar, el gestor recupera la sesión del almacén.
-    await iniciarSesion(tester);
+    // Comprobamos que el token quedó persistido en el almacén seguro.
     final Sesion? enAlmacen = await getIt<SesionRepository>().leer();
-    await getIt<GestorSesion>().restaurar();
-    await tester.pumpAndSettle();
-
     expect(enAlmacen, isNotNull);
     expect(find.text('Sesión activa'), findsOneWidget);
+
+    // Simula el reinicio real de la aplicación: se destruye la instancia
+    // en memoria del gestor y se registra una instancia completamente nueva,
+    // garantizando que no se reutiliza estado en memoria y que la sesión
+    // se recupera genuinamente desde el almacén seguro.
+    getIt<GestorSesion>().dispose();
+    await getIt.unregister<GestorSesion>();
+
+    final GestorSesion nuevoGestor = GestorSesion(
+      repositorio: getIt<SesionRepository>(),
+      generador: getIt<GeneradorTokenSimulado>(),
+      directorio: getIt<DirectorioUsuariosSimulado>(),
+      programarExpiracionAutomatica: false,
+    );
+    getIt.registerSingleton<GestorSesion>(nuevoGestor);
+
+    // Al arrancar la aplicación, main() ejecuta restaurar() en el nuevo gestor.
+    await nuevoGestor.restaurar();
+    await tester.pumpWidget(const MaterialApp(home: PantallaSesion()));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Sesión activa'), findsOneWidget);
+    expect(find.text('Rosa Quispe Huamán'), findsOneWidget);
+    expect(find.text('****3456'), findsOneWidget);
   });
 }
