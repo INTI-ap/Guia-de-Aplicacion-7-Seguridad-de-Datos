@@ -141,15 +141,30 @@ void main() {
     expect(enAlmacen, isNotNull);
     expect(find.text('Sesión activa'), findsOneWidget);
 
-    // Simula el reinicio real de la aplicación: se destruye la instancia
-    // en memoria del gestor y se registra una instancia completamente nueva,
-    // garantizando que no se reutiliza estado en memoria y que la sesión
-    // se recupera genuinamente desde el almacén seguro.
+    // Simula la persistencia entre aperturas: conserva el dato serializado
+    // y reconstruye el gestor, el repositorio y el adaptador. Al usar un
+    // doble en memoria, esta prueba no sustituye el cierre/reinicio manual
+    // de la aplicación en Android o iOS.
+    final Map<String, String> datosPersistidos = Map<String, String>.from(
+      almacen.volcadoParaPruebas(),
+    );
     getIt<GestorSesion>().dispose();
     await getIt.unregister<GestorSesion>();
+    await getIt.unregister<SesionRepository>();
+    await getIt.unregister<AlmacenSeguro>();
+    await almacen.limpiar();
+
+    final AlmacenSeguroEnMemoria almacenReabierto = AlmacenSeguroEnMemoria(
+      datosIniciales: datosPersistidos,
+    );
+    final SesionRepository repositorioReabierto = SesionRepositorySeguro(
+      almacenReabierto,
+    );
+    getIt.registerSingleton<AlmacenSeguro>(almacenReabierto);
+    getIt.registerSingleton<SesionRepository>(repositorioReabierto);
 
     final GestorSesion nuevoGestor = GestorSesion(
-      repositorio: getIt<SesionRepository>(),
+      repositorio: repositorioReabierto,
       generador: getIt<GeneradorTokenSimulado>(),
       directorio: getIt<DirectorioUsuariosSimulado>(),
       programarExpiracionAutomatica: false,
@@ -164,5 +179,7 @@ void main() {
     expect(find.text('Sesión activa'), findsOneWidget);
     expect(find.text('Rosa Quispe Huamán'), findsOneWidget);
     expect(find.text('****3456'), findsOneWidget);
+    expect(await repositorioReabierto.leer(), isNotNull);
+    expect(await almacenReabierto.claves(), contains('sesion.activa'));
   });
 }

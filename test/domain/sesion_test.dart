@@ -1,5 +1,6 @@
 import 'dart:math';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:manos_seguras/core/fallos.dart';
 import 'package:manos_seguras/core/gestor_sesion.dart';
@@ -279,7 +280,7 @@ void main() {
 
   group('GestorSesion · expiración en memoria y datos corruptos', () {
     test('el temporizador expira automáticamente la sesión y limpia el almacén',
-        () async {
+        () {
       // Repositorio doble en memoria
       final Map<String, String> almacen = <String, String>{};
       final _RepoEnMemoria repo = _RepoEnMemoria(almacen);
@@ -289,21 +290,26 @@ void main() {
           vigencia: const Duration(milliseconds: 50),
         ),
       );
+      addTearDown(gestor.dispose);
 
-      final Sesion sesion = await gestor.iniciarSesion(
-        documento: '40123456',
-        clave: 'higiene2026',
-      );
+      fakeAsync((FakeAsync relojFalso) {
+        bool inicioCompleto = false;
+        gestor
+            .iniciarSesion(documento: '40123456', clave: 'higiene2026')
+            .then((_) => inicioCompleto = true);
+        relojFalso.flushMicrotasks();
 
-      expect(gestor.value, sesion);
-      expect(almacen, isNotEmpty);
+        expect(inicioCompleto, isTrue);
+        expect(gestor.value, isNotNull);
+        expect(almacen, isNotEmpty);
 
-      // Esperamos que venza el tiempo de vigencia
-      await Future<void>.delayed(const Duration(milliseconds: 100));
+        // Avanza el reloj falso: la prueba no depende de esperas reales.
+        relojFalso.elapse(const Duration(seconds: 1));
+        relojFalso.flushMicrotasks();
+      });
 
       expect(gestor.value, isNull);
       expect(almacen, isEmpty);
-      gestor.dispose();
     });
 
     test('restaurar con datos corruptos limpia el almacén y no deja escapar la falla',
@@ -313,22 +319,83 @@ void main() {
       };
       final _RepoEnMemoria repo = _RepoEnMemoria(almacen);
       final GestorSesion gestor = GestorSesion(repositorio: repo);
+      addTearDown(gestor.dispose);
 
       await gestor.restaurar();
 
       expect(gestor.value, isNull);
       expect(almacen, isEmpty);
-      gestor.dispose();
+    });
+
+    test('restaurar no propaga el fallo al limpiar una sesión corrupta',
+        () async {
+      final Map<String, String> almacen = <String, String>{
+        'sesion.activa': '{"v":1,"rol":12345}',
+      };
+      final _RepoEnMemoria repo = _RepoEnMemoria(
+        almacen,
+        fallarAlCerrar: true,
+      );
+      final GestorSesion gestor = GestorSesion(repositorio: repo);
+      addTearDown(gestor.dispose);
+
+      await expectLater(gestor.restaurar(), completes);
+
+      expect(gestor.value, isNull);
+      // La limpieza falló: no se afirma que el dato corrupto fue borrado.
+      expect(almacen.containsKey('sesion.activa'), isTrue);
+    });
+
+    test('restaurar programa la expiración mientras la aplicación está abierta',
+        () {
+      final DateTime ahora = DateTime.now();
+      final Sesion sesion = Sesion(
+        documento: '40123456',
+        nombre: 'Rosa Quispe Huamán',
+        rol: RolUsuario.observador,
+        token: GeneradorTokenSimulado(
+          vigencia: const Duration(milliseconds: 50),
+        ).emitir(ahora: ahora),
+      );
+      final Map<String, String> almacen = <String, String>{
+        'sesion.activa': sesion.serializar(),
+      };
+      final _RepoEnMemoria repo = _RepoEnMemoria(almacen);
+      final GestorSesion gestor = GestorSesion(repositorio: repo);
+      addTearDown(gestor.dispose);
+
+      fakeAsync((FakeAsync relojFalso) {
+        bool restauracionCompleta = false;
+        gestor.restaurar().then((_) => restauracionCompleta = true);
+        relojFalso.flushMicrotasks();
+
+        expect(restauracionCompleta, isTrue);
+        expect(gestor.value, isNotNull);
+        expect(almacen, isNotEmpty);
+
+        relojFalso.elapse(const Duration(seconds: 1));
+        relojFalso.flushMicrotasks();
+      });
+
+      expect(gestor.value, isNull);
+      expect(almacen, isEmpty);
     });
   });
 }
 
 class _RepoEnMemoria implements SesionRepository {
-  _RepoEnMemoria(this.almacen);
+  _RepoEnMemoria(this.almacen, {this.fallarAlCerrar = false});
+
   final Map<String, String> almacen;
+  final bool fallarAlCerrar;
 
   @override
-  Future<void> cerrar() async => almacen.remove('sesion.activa');
+  Future<void> cerrar() async {
+    if (fallarAlCerrar) {
+      throw const FalloSeguridad('Fallo simulado al limpiar el almacén.');
+    }
+    almacen.remove('sesion.activa');
+  }
 
   @override
   Future<void> guardar(Sesion sesion) async =>
