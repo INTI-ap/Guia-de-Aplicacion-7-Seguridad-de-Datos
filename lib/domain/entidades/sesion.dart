@@ -290,16 +290,12 @@ class Sesion {
     }
 
     final Object? rolCrudo = mapa['rol'];
-    if (rolCrudo is! String) {
-      throw const FalloDeValidacion(
-        'El rol guardado no tiene un formato válido (debe ser texto).',
-      );
-    }
-
     return Sesion(
       documento: _textoRequerido(mapa, 'documento'),
       nombre: _textoRequerido(mapa, 'nombre'),
-      rol: RolUsuario.desdeNombre(rolCrudo),
+      rol: RolUsuario.desdeNombre(
+        rolCrudo is String ? rolCrudo : null,
+      ),
       token: TokenSesion.desdeAlmacen(jsonEncode(tokenCrudo)),
     );
   }

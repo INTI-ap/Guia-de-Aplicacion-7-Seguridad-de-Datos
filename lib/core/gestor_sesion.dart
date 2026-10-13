@@ -42,18 +42,17 @@ class GestorSesion extends ValueNotifier<Sesion?> {
     required SesionRepository repositorio,
     GeneradorTokenSimulado? generador,
     DirectorioUsuariosSimulado? directorio,
-    bool programarExpiracionAutomatica = true,
+    this.intervaloExpiracion = const Duration(seconds: 30),
   })  : _repositorio = repositorio,
         _generador = generador ?? GeneradorTokenSimulado(),
         _directorio = directorio ?? DirectorioUsuariosSimulado(),
-        _programarExpiracionAutomatica = programarExpiracionAutomatica,
         super(null);
 
   final SesionRepository _repositorio;
   final GeneradorTokenSimulado _generador;
   final DirectorioUsuariosSimulado _directorio;
-  final bool _programarExpiracionAutomatica;
-  Timer? _temporizadorExpiracion;
+  final Duration intervaloExpiracion;
+  Timer? _timerExpiracion;
 
   /// `true` si hay una sesión con token vigente en memoria.
   bool get haySesionActiva => value != null && value!.activaEn(DateTime.now());
@@ -66,37 +65,13 @@ class GestorSesion extends ValueNotifier<Sesion?> {
         : 'Almacén sin cifrado (implementación de laboratorio)';
   }
 
-  void _programarExpiracion(Sesion sesion) {
-    _temporizadorExpiracion?.cancel();
-    _temporizadorExpiracion = null;
-    if (!_programarExpiracionAutomatica) return;
-
-    final Duration restante = sesion.token.restanteEn(DateTime.now());
-    if (restante <= Duration.zero) {
-      _expirarSesion();
-      return;
-    }
-    _temporizadorExpiracion = Timer(restante, _expirarSesion);
-  }
-
-  Future<void> _expirarSesion() async {
-    _temporizadorExpiracion?.cancel();
-    _temporizadorExpiracion = null;
-    try {
-      await _repositorio.cerrar();
-    } catch (e) {
-      debugPrint('No se pudo limpiar el almacén al expirar el token: $e');
-    }
-    value = null;
-  }
-
   /// **Restaura la sesión** al arrancar la aplicación.
   ///
   /// Se llama una sola vez, desde `main()`. Si el almacén no responde, la
   /// aplicación **no** debe impedir el arranque: se registra el problema y se
   /// continúa sin sesión (mismo criterio que `TemaApp.cargarDesdeDisco`). Si
-  /// lo que falla es el contenido guardado (formato desconocido o datos corruptos),
-  /// tampoco se rompe: se limpia el almacén y se pide autenticarse otra vez.
+  /// lo que falla es el contenido guardado (formato desconocido), tampoco se
+  /// rompe: se limpia el almacén y se pide autenticarse otra vez.
   Future<void> restaurar() async {
     try {
       final Sesion? guardada = await _repositorio.leer();
@@ -105,30 +80,24 @@ class GestorSesion extends ValueNotifier<Sesion?> {
         return;
       }
       if (!guardada.activaEn(DateTime.now())) {
-        // Token vencido: cerrar es la única respuesta correcta.
         await _repositorio.cerrar();
         value = null;
         return;
       }
       value = guardada;
-      _programarExpiracion(guardada);
+      _iniciarVigilanciaExpiracion();
     } on FalloDeValidacion catch (error) {
       debugPrint('La sesión guardada no es legible, se descarta: '
           '${error.mensaje}');
       try {
         await _repositorio.cerrar();
-      } catch (e) {
-        debugPrint('Fallo al limpiar datos corruptos: $e');
+      } on Fallo catch (limpiezaError) {
+        debugPrint('No se pudo limpiar la sesión corrupta: '
+            '${limpiezaError.mensaje}');
       }
       value = null;
     } on FalloSeguridad catch (error) {
       debugPrint('El almacén seguro no está disponible: ${error.mensaje}');
-      value = null;
-    } catch (error) {
-      debugPrint('Error inesperado al restaurar sesión: $error');
-      try {
-        await _repositorio.cerrar();
-      } catch (_) {}
       value = null;
     }
   }
@@ -163,23 +132,36 @@ class GestorSesion extends ValueNotifier<Sesion?> {
 
     await _repositorio.guardar(nueva);
     value = nueva;
-    _programarExpiracion(nueva);
+    _iniciarVigilanciaExpiracion();
     return nueva;
   }
 
   /// **Cierra sesión** de forma completa: borra el dato del almacén seguro y
   /// la referencia en memoria.
   Future<void> cerrarSesion() async {
-    _temporizadorExpiracion?.cancel();
-    _temporizadorExpiracion = null;
     await _repositorio.cerrar();
     value = null;
+    detenerVigilanciaExpiracion();
+  }
+
+  void _iniciarVigilanciaExpiracion() {
+    detenerVigilanciaExpiracion();
+    _timerExpiracion = Timer.periodic(intervaloExpiracion, (_) {
+      final Sesion? sesion = value;
+      if (sesion != null && !sesion.activaEn(DateTime.now())) {
+        cerrarSesion();
+      }
+    });
+  }
+
+  void detenerVigilanciaExpiracion() {
+    _timerExpiracion?.cancel();
+    _timerExpiracion = null;
   }
 
   @override
   void dispose() {
-    _temporizadorExpiracion?.cancel();
-    _temporizadorExpiracion = null;
+    detenerVigilanciaExpiracion();
     super.dispose();
   }
 

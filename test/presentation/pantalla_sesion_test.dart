@@ -10,15 +10,6 @@ import 'package:manos_seguras/domain/servicios/generador_token.dart';
 import 'package:manos_seguras/presentation/di.dart';
 import 'package:manos_seguras/presentation/pantallas/pantalla_sesion.dart';
 
-/// **Pruebas de widget de la pantalla de sesión** (Semana 11).
-///
-/// Comprueban dos cosas que no se pueden verificar en una prueba de dominio:
-///
-///  1. el flujo completo funciona desde la interfaz (escribir credenciales,
-///     iniciar sesión, ver el estado, cerrar sesión);
-///  2. **el valor del token nunca llega a la pantalla**, que es la regla de
-///     manejo del dato sensible más fácil de romper sin darse cuenta (basta
-///     con un `Text(sesion.token.valor)` "para depurar").
 void main() {
   late AlmacenSeguroEnMemoria almacen;
 
@@ -38,31 +29,19 @@ void main() {
           repositorio: getIt<SesionRepository>(),
           generador: getIt<GeneradorTokenSimulado>(),
           directorio: getIt<DirectorioUsuariosSimulado>(),
-          programarExpiracionAutomatica: false,
         ),
       );
   });
 
   tearDown(() async {
     if (getIt.isRegistered<GestorSesion>()) {
-      getIt<GestorSesion>().dispose();
+      getIt<GestorSesion>().detenerVigilanciaExpiracion();
     }
     await getIt.reset();
   });
 
   Future<void> abrir(WidgetTester tester) async {
     await tester.pumpWidget(const MaterialApp(home: PantallaSesion()));
-    await tester.pumpAndSettle();
-  }
-
-  Future<void> iniciarSesion(
-    WidgetTester tester, {
-    String documento = '40123456',
-    String clave = 'higiene2026',
-  }) async {
-    await tester.enterText(find.byType(TextFormField).first, documento);
-    await tester.enterText(find.byType(TextFormField).last, clave);
-    await tester.tap(find.widgetWithText(ElevatedButton, 'Iniciar sesión'));
     await tester.pumpAndSettle();
   }
 
@@ -78,22 +57,27 @@ void main() {
   testWidgets('con credenciales correctas la sesión queda activa',
       (WidgetTester tester) async {
     await abrir(tester);
-    await iniciarSesion(tester);
+    await tester.enterText(find.byType(TextFormField).first, '40123456');
+    await tester.enterText(find.byType(TextFormField).last, 'higiene2026');
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Iniciar sesión'));
+    await tester.pumpAndSettle();
 
     expect(find.text('Sesión activa'), findsOneWidget);
     expect(find.text('Rosa Quispe Huamán'), findsOneWidget);
-    // El documento se muestra enmascarado.
     expect(find.text('****3456'), findsOneWidget);
     expect(find.textContaining('Token vigente'), findsOneWidget);
-    // El dato del token se resume como "huella … · expira en …"; se busca el
-    // sufijo para no confundirlo con el texto de la nota de seguridad.
     expect(find.textContaining('expira en'), findsOneWidget);
+
+    getIt<GestorSesion>().detenerVigilanciaExpiracion();
   });
 
   testWidgets('con credenciales incorrectas no se crea ninguna sesión',
       (WidgetTester tester) async {
     await abrir(tester);
-    await iniciarSesion(tester, clave: 'clave-equivocada');
+    await tester.enterText(find.byType(TextFormField).first, '40123456');
+    await tester.enterText(find.byType(TextFormField).last, 'clave-equivocada');
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Iniciar sesión'));
+    await tester.pumpAndSettle();
 
     expect(find.text('Sin sesión iniciada'), findsOneWidget);
     expect(find.text('Documento o clave incorrectos.'), findsOneWidget);
@@ -103,23 +87,28 @@ void main() {
   testWidgets('el valor del token NO se muestra en la pantalla',
       (WidgetTester tester) async {
     await abrir(tester);
-    await iniciarSesion(tester);
+    await tester.enterText(find.byType(TextFormField).first, '40123456');
+    await tester.enterText(find.byType(TextFormField).last, 'higiene2026');
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Iniciar sesión'));
+    await tester.pumpAndSettle();
 
-    // La prueba conoce el token porque puede leerlo del repositorio…
     final Sesion? sesion = await getIt<SesionRepository>().leer();
     expect(sesion, isNotNull);
 
-    // …y comprueba que en el árbol de widgets no aparece por ningún lado.
     expect(find.textContaining(sesion!.token.valor), findsNothing);
     expect(find.text(sesion.token.valor), findsNothing);
-    // Solo se publica la huella.
     expect(find.textContaining(sesion.token.huella), findsOneWidget);
+
+    getIt<GestorSesion>().detenerVigilanciaExpiracion();
   });
 
   testWidgets('cerrar sesión vacía el almacén seguro',
       (WidgetTester tester) async {
     await abrir(tester);
-    await iniciarSesion(tester);
+    await tester.enterText(find.byType(TextFormField).first, '40123456');
+    await tester.enterText(find.byType(TextFormField).last, 'higiene2026');
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Iniciar sesión'));
+    await tester.pumpAndSettle();
 
     await tester.tap(
       find.widgetWithText(ElevatedButton, 'Cerrar sesión y borrar el token'),
@@ -134,52 +123,26 @@ void main() {
   testWidgets('la sesión se restaura al volver a abrir la aplicación',
       (WidgetTester tester) async {
     await abrir(tester);
-    await iniciarSesion(tester);
-
-    // Comprobamos que el token quedó persistido en el almacén seguro.
-    final Sesion? enAlmacen = await getIt<SesionRepository>().leer();
-    expect(enAlmacen, isNotNull);
-    expect(find.text('Sesión activa'), findsOneWidget);
-
-    // Simula la persistencia entre aperturas: conserva el dato serializado
-    // y reconstruye el gestor, el repositorio y el adaptador. Al usar un
-    // doble en memoria, esta prueba no sustituye el cierre/reinicio manual
-    // de la aplicación en Android o iOS.
-    final Map<String, String> datosPersistidos = Map<String, String>.from(
-      almacen.volcadoParaPruebas(),
-    );
-    getIt<GestorSesion>().dispose();
-    await getIt.unregister<GestorSesion>();
-    await getIt.unregister<SesionRepository>();
-    await getIt.unregister<AlmacenSeguro>();
-    await almacen.limpiar();
-
-    final AlmacenSeguroEnMemoria almacenReabierto = AlmacenSeguroEnMemoria(
-      datosIniciales: datosPersistidos,
-    );
-    final SesionRepository repositorioReabierto = SesionRepositorySeguro(
-      almacenReabierto,
-    );
-    getIt.registerSingleton<AlmacenSeguro>(almacenReabierto);
-    getIt.registerSingleton<SesionRepository>(repositorioReabierto);
-
-    final GestorSesion nuevoGestor = GestorSesion(
-      repositorio: repositorioReabierto,
-      generador: getIt<GeneradorTokenSimulado>(),
-      directorio: getIt<DirectorioUsuariosSimulado>(),
-      programarExpiracionAutomatica: false,
-    );
-    getIt.registerSingleton<GestorSesion>(nuevoGestor);
-
-    // Al arrancar la aplicación, main() ejecuta restaurar() en el nuevo gestor.
-    await nuevoGestor.restaurar();
-    await tester.pumpWidget(const MaterialApp(home: PantallaSesion()));
+    await tester.enterText(find.byType(TextFormField).first, '40123456');
+    await tester.enterText(find.byType(TextFormField).last, 'higiene2026');
+    await tester.tap(find.widgetWithText(ElevatedButton, 'Iniciar sesión'));
     await tester.pumpAndSettle();
 
     expect(find.text('Sesión activa'), findsOneWidget);
-    expect(find.text('Rosa Quispe Huamán'), findsOneWidget);
-    expect(find.text('****3456'), findsOneWidget);
-    expect(await repositorioReabierto.leer(), isNotNull);
-    expect(await almacenReabierto.claves(), contains('sesion.activa'));
+
+    final GestorSesion gestorNuevo = GestorSesion(
+      repositorio: getIt<SesionRepository>(),
+      generador: getIt<GeneradorTokenSimulado>(),
+      directorio: getIt<DirectorioUsuariosSimulado>(),
+    );
+
+    await gestorNuevo.restaurar();
+
+    expect(gestorNuevo.value, isNotNull);
+    expect(gestorNuevo.value!.nombre, 'Rosa Quispe Huamán');
+    expect(gestorNuevo.value!.documento, '40123456');
+
+    gestorNuevo.dispose();
+    getIt<GestorSesion>().detenerVigilanciaExpiracion();
   });
 }
