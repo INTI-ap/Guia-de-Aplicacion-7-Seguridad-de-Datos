@@ -29,6 +29,12 @@ class SesionRepositorySeguro implements SesionRepository {
   /// de las preferencias de la Semana 10.
   static const String claveSesion = 'sesion.activa';
 
+  /// Clave que usa el experimento forense de la bóveda para su token B.
+  ///
+  /// Es **distinta** de [claveSesion] para que el experimento no pise la
+  /// sesión activa ni deje al [GestorSesion] con un estado desactualizado.
+  static const String claveExperimento = 'experimento.token_b';
+
   final AlmacenSeguro _almacen;
 
   @override
@@ -61,6 +67,19 @@ class SesionRepositorySeguro implements SesionRepository {
 
   @override
   Future<void> cerrar() => _almacen.eliminar(claveSesion);
+
+  /// Guarda el token del experimento forense bajo [claveExperimento].
+  ///
+  /// El experimento de la bóveda necesita escribir en el almacén seguro para
+  /// demostrar que su token **no** aparece en el archivo SQLite. Si usara
+  /// [claveSesion], estaría sobrescribiendo la sesión activa y dejaría al
+  /// [GestorSesion] con un estado desactualizado.
+  Future<void> guardarExperimento(Sesion sesion) {
+    return _almacen.escribir(claveExperimento, sesion.serializar());
+  }
+
+  /// Limpia la clave del experimento forense sin tocar la sesión activa.
+  Future<void> cerrarExperimento() => _almacen.eliminar(claveExperimento);
 
   /// Descripción del mecanismo de protección, para la pantalla de
   /// diagnóstico. Delega en el almacén para no duplicar la lógica de

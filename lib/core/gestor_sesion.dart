@@ -144,6 +144,13 @@ class GestorSesion extends ValueNotifier<Sesion?> {
     detenerVigilanciaExpiracion();
   }
 
+  /// Fuerza una notificación a los escuchas sin cambiar el valor.
+  ///
+  /// Lo usa la pantalla de la bóveda después de limpiar el experimento
+  /// forense: el almacén seguro cambió por fuera del gestor y las pantallas
+  /// que lo escuchan deben reconstruirse para reflejar el estado actual.
+  void refrescar() => notifyListeners();
+
   void _iniciarVigilanciaExpiracion() {
     detenerVigilanciaExpiracion();
     _timerExpiracion = Timer.periodic(intervaloExpiracion, (_) {

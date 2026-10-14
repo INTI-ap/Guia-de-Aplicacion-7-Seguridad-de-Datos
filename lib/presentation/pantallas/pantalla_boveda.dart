@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/fallos.dart';
+import '../../core/gestor_sesion.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/local/daos/preferencias_dao.dart';
 import '../../data/local/inspeccion_forense.dart';
@@ -91,15 +92,19 @@ class _PantallaBovedaState extends State<PantallaBoveda> {
     try {
       final PreferenciasDao preferencias = getIt<PreferenciasDao>();
       final SesionRepository inseguro = SesionRepositoryInseguro(preferencias);
-      final SesionRepository seguro = getIt<SesionRepository>();
+      final SesionRepositorySeguro seguro =
+          getIt<SesionRepository>() as SesionRepositorySeguro;
 
       final Sesion sesionA = _sesionDeLaboratorio('A');
       final Sesion sesionB = _sesionDeLaboratorio('B');
 
+      await seguro.cerrarExperimento();
+      await inseguro.cerrar();
+
       // Paso 1: el antipatrón. El token queda en la tabla `preferencias`.
       await inseguro.guardar(sesionA);
       // Paso 2: el control. El token sale del sistema de archivos.
-      await seguro.guardar(sesionB);
+      await seguro.guardarExperimento(sesionB);
 
       // Paso 3: se recorren los bytes del archivo buscando cada token.
       final ResultadoForense forenseA =
@@ -156,7 +161,10 @@ class _PantallaBovedaState extends State<PantallaBoveda> {
     });
     try {
       await SesionRepositoryInseguro(getIt<PreferenciasDao>()).cerrar();
-      await getIt<SesionRepository>().cerrar();
+      final SesionRepositorySeguro seguro =
+          getIt<SesionRepository>() as SesionRepositorySeguro;
+      await seguro.cerrarExperimento();
+      getIt<GestorSesion>().refrescar();
       if (!mounted) return;
       setState(() => _experimento = null);
       await _refrescarClaves();
@@ -266,21 +274,24 @@ class _PantallaBovedaState extends State<PantallaBoveda> {
                         ),
                       ),
                       const SizedBox(height: 8),
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        value: _mostrarValores,
-                        onChanged: (bool valor) =>
-                            setState(() => _mostrarValores = valor),
-                        title: const Text(
-                          'Mostrar el token en claro (solo laboratorio)',
-                          style: TextStyle(fontSize: 12),
-                        ),
-                        subtitle: const Text(
-                          'En la captura del informe el valor debe ir '
-                          'censurado.',
-                          style: TextStyle(fontSize: 11),
-                        ),
-                      ),
+                       Material(
+                         type: MaterialType.transparency,
+                         child: SwitchListTile(
+                           contentPadding: EdgeInsets.zero,
+                           value: _mostrarValores,
+                           onChanged: (bool valor) =>
+                               setState(() => _mostrarValores = valor),
+                           title: const Text(
+                             'Mostrar el token en claro (solo laboratorio)',
+                             style: TextStyle(fontSize: 12),
+                           ),
+                           subtitle: const Text(
+                             'En la captura del informe el valor debe ir '
+                             'censurado.',
+                             style: TextStyle(fontSize: 11),
+                           ),
+                         ),
+                       ),
                       const SizedBox(height: 8),
                       Container(
                         width: double.infinity,
